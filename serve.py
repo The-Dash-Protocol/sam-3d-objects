@@ -3,6 +3,7 @@
 SAM 3D Objects API Server using LitServe
 
 Usage:
+    cd /path/to/sam-3d-objects
     python serve.py
 
 API Endpoint:
@@ -41,20 +42,26 @@ import numpy as np
 from PIL import Image
 import litserve as ls
 
+# Get project root directory (where this script is located)
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+
 # Add notebook to path for inference imports
-sys.path.append(os.path.join(os.path.dirname(__file__), "notebook"))
+sys.path.append(os.path.join(PROJECT_ROOT, "notebook"))
 from inference import Inference
 
 
 class SAM3DObjectsAPI(ls.LitAPI):
     """LitServe API for SAM 3D Objects inference."""
 
+    def __init__(self):
+        """Initialize with max_batch_size for new LitServe API."""
+        super().__init__()
+        self.max_batch_size = 1  # Process one request at a time (GPU memory)
+
     def setup(self, device: str):
         """Initialize the inference pipeline."""
-        # Load model
-        config_path = os.path.join(
-            os.path.dirname(__file__), "checkpoints/hf/pipeline.yaml"
-        )
+        # Load model - config path relative to project root
+        config_path = os.path.join(PROJECT_ROOT, "checkpoints/hf/pipeline.yaml")
         self.inference = Inference(config_path, compile=False)
         print(f"Model loaded on {device}")
 
@@ -150,7 +157,6 @@ def main():
     server = ls.LitServer(
         api,
         accelerator="auto",
-        max_batch_size=1,  # Process one request at a time (GPU memory)
         timeout=300,  # 5 minute timeout for inference
     )
     server.run(port=8000, generate_client_file=False)

@@ -111,38 +111,49 @@ class SAM3DObjectsAPI(ls.LitAPI):
         1. Simple base64 PNG: ["base64...", "base64..."]
         2. Gemini format: [{"mask": "data:image/png;base64,...", "box_2d": [y0,x0,y1,x1]}, ...]
         """
+        print(f"[SAM3D Server] decode_request called")
+        print(f"[SAM3D Server] Request keys: {request.keys()}")
+
         # Decode image
         image_b64 = request.get("image")
         if not image_b64:
             raise ValueError("Missing 'image' field in request")
 
+        print(f"[SAM3D Server] Image b64 length: {len(image_b64)}")
         image_bytes = self._decode_base64_image(image_b64)
         image = Image.open(io.BytesIO(image_bytes))
         image = np.array(image).astype(np.uint8)
         img_h, img_w = image.shape[:2]
+        print(f"[SAM3D Server] Image decoded: {img_w}x{img_h}, shape={image.shape}")
 
         # Decode masks
         masks_input = request.get("masks", [])
+        print(f"[SAM3D Server] Masks input count: {len(masks_input)}")
         if not masks_input:
             raise ValueError("Missing 'masks' field in request")
 
         masks = []
-        for mask_item in masks_input:
+        for i, mask_item in enumerate(masks_input):
             if isinstance(mask_item, dict):
                 # Gemini format: {"mask": "...", "box_2d": [...]}
+                print(f"[SAM3D Server] Mask {i}: Gemini format with box_2d")
                 mask = self._decode_gemini_mask(mask_item, (img_h, img_w))
             else:
                 # Simple base64 PNG string
+                print(f"[SAM3D Server] Mask {i}: base64 string, len={len(mask_item)}")
                 mask_bytes = self._decode_base64_image(mask_item)
                 mask_img = Image.open(io.BytesIO(mask_bytes))
                 mask = np.array(mask_img)
+                print(f"[SAM3D Server] Mask {i}: decoded shape={mask.shape}, dtype={mask.dtype}")
                 # Convert to boolean mask
                 mask = mask > 127
                 if mask.ndim == 3:
                     mask = mask[..., -1]
+            print(f"[SAM3D Server] Mask {i}: final shape={mask.shape}, sum={mask.sum()}")
             masks.append(mask)
 
         seed = request.get("seed", 42)
+        print(f"[SAM3D Server] Decoded {len(masks)} masks, seed={seed}")
 
         return {
             "image": image,
@@ -152,16 +163,21 @@ class SAM3DObjectsAPI(ls.LitAPI):
 
     def predict(self, inputs: dict) -> dict:
         """Run inference on image with multiple masks."""
+        print(f"[SAM3D Server] predict called")
         image = inputs["image"]
         masks = inputs["masks"]
         seed = inputs["seed"]
 
+        print(f"[SAM3D Server] Processing {len(masks)} masks")
         results = []
 
         for idx, mask in enumerate(masks):
+            print(f"[SAM3D Server] Processing mask {idx}/{len(masks)}, mask shape={mask.shape}, sum={mask.sum()}")
             try:
                 # Run inference for each mask
+                print(f"[SAM3D Server] Running inference for mask {idx}...")
                 output = self.inference(image, mask, seed=seed)
+                print(f"[SAM3D Server] Inference complete for mask {idx}, output keys: {output.keys()}")
 
                 result = {
                     "index": idx,
@@ -172,12 +188,14 @@ class SAM3DObjectsAPI(ls.LitAPI):
 
                 # Export mesh to GLB if available
                 if output.get("glb") is not None:
+                    print(f"[SAM3D Server] Exporting GLB for mask {idx}...")
                     glb_buffer = io.BytesIO()
                     output["glb"].export(glb_buffer, file_type="glb")
                     glb_buffer.seek(0)
                     result["mesh_glb"] = base64.b64encode(glb_buffer.read()).decode()
                 elif output.get("mesh") is not None and len(output["mesh"]) > 0:
                     # Export raw mesh data if GLB not available
+                    print(f"[SAM3D Server] Exporting mesh data for mask {idx}...")
                     mesh = output["mesh"][0]
                     result["mesh"] = {
                         "vertices": mesh.vertices.cpu().tolist(),
@@ -187,13 +205,18 @@ class SAM3DObjectsAPI(ls.LitAPI):
                         result["mesh"]["vertex_colors"] = mesh.vertex_attrs.cpu().tolist()
 
                 results.append(result)
+                print(f"[SAM3D Server] Mask {idx} done, result keys: {result.keys()}")
 
             except Exception as e:
+                import traceback
+                print(f"[SAM3D Server] ERROR for mask {idx}: {e}")
+                traceback.print_exc()
                 results.append({
                     "index": idx,
                     "error": str(e),
                 })
 
+        print(f"[SAM3D Server] All done, returning {len(results)} results")
         return {"objects": results, "success": True}
 
     def encode_response(self, output: dict) -> dict:

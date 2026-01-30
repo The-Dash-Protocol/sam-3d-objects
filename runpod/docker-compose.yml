@@ -1,0 +1,84 @@
+version: '3.8'
+
+# SAM 3D Objects - Docker Compose Configuration
+# For local development/testing with GPU support
+
+services:
+  # Main inference service
+  sam3d-inference:
+    build:
+      context: ..
+      dockerfile: runpod/Dockerfile
+    image: sam3d-objects:latest
+    container_name: sam3d-objects
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_HOME=/usr/local/cuda
+      - LIDRA_SKIP_INIT=true
+      - RUN_MODE=api  # Options: serverless, api, gradio, shell
+      - AUTO_LOAD_MODEL=true
+      - HF_TOKEN=${HF_TOKEN}  # Set via .env file or export
+      - PORT=8000
+    volumes:
+      # Mount checkpoints directory for persistence
+      - ./checkpoints:/app/checkpoints
+      # Mount output directory
+      - ./outputs:/app/outputs
+    ports:
+      - "8000:8000"  # API server
+      - "7860:7860"  # Gradio (if using gradio mode)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    # Require 32GB+ VRAM
+    shm_size: '16gb'
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+  # Gradio web interface (alternative)
+  sam3d-gradio:
+    build:
+      context: ..
+      dockerfile: runpod/Dockerfile
+    image: sam3d-objects:latest
+    container_name: sam3d-gradio
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_HOME=/usr/local/cuda
+      - LIDRA_SKIP_INIT=true
+      - RUN_MODE=gradio
+      - AUTO_LOAD_MODEL=true
+      - HF_TOKEN=${HF_TOKEN}
+      - GRADIO_SHARE=false
+    volumes:
+      - ./checkpoints:/app/checkpoints
+      - ./outputs:/app/outputs
+    ports:
+      - "7860:7860"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: '16gb'
+    profiles:
+      - gradio
+
+# Volume for persistent storage
+volumes:
+  checkpoints:
+  outputs:
+
+# Network configuration
+networks:
+  default:
+    name: sam3d-network
